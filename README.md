@@ -1,2 +1,2 @@
 # desafiobrprev
-API para Cadastro de Produtos.
+API RestFull para cadastro de Pedidos.
