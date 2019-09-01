@@ -1,9 +1,11 @@
 package br.com.ronaldo.desafiobrprev.service.impl;
 
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
+
+import javax.transaction.Transactional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -12,17 +14,18 @@ import org.springframework.stereotype.Service;
 import br.com.ronaldo.desafiobrprev.controller.exception.ResponseError;
 import br.com.ronaldo.desafiobrprev.domain.Cliente;
 import br.com.ronaldo.desafiobrprev.domain.ItemPedido;
+import br.com.ronaldo.desafiobrprev.domain.ItemPedidoPK;
 import br.com.ronaldo.desafiobrprev.domain.Pedido;
-import br.com.ronaldo.desafiobrprev.dto.PedidoRequestDTO;
+import br.com.ronaldo.desafiobrprev.domain.Produto;
+import br.com.ronaldo.desafiobrprev.dto.PedidoCreateRequestDTO;
 import br.com.ronaldo.desafiobrprev.dto.ProdutoDTO;
 import br.com.ronaldo.desafiobrprev.repository.ClienteRepository;
+import br.com.ronaldo.desafiobrprev.repository.ItemPedidoRepository;
 import br.com.ronaldo.desafiobrprev.repository.PedidoRepository;
 import br.com.ronaldo.desafiobrprev.repository.ProdutoRepository;
 import br.com.ronaldo.desafiobrprev.security.UserSS;
 import br.com.ronaldo.desafiobrprev.service.PedidoService;
 import br.com.ronaldo.desafiobrprev.service.UserService;
-import br.com.ronaldo.desafiobrprev.service.exception.AuthorizationException;
-import br.com.ronaldo.desafiobrprev.service.exception.GenericException;
 
 @Service
 public class PedidoServiceImpl implements PedidoService {
@@ -32,66 +35,82 @@ public class PedidoServiceImpl implements PedidoService {
 
 	@Autowired
 	private ClienteRepository clienteRepository;
-	
+
 	@Autowired
 	private ProdutoRepository produtoRepository;
 
-	@Override
-	public Pedido create(PedidoRequestDTO pedidoRequestDTO) {
+	@Autowired
+	private ItemPedidoRepository itemPedidoRepository;
 
-		// valida email = pega o cliente
+	@Override
+	public Pedido create(PedidoCreateRequestDTO pedidoRequestDTO) {
+
 		Cliente cliente = clienteRepository.findByEmail(pedidoRequestDTO.getEmail());
 
 		UserSS user = UserService.authenticated();
 
 		if (cliente != null) {
 			if (user == null) {
-				throw new AuthorizationException("Acesso negado");
+				throw new ResponseError(HttpStatus.UNAUTHORIZED, "Acesso negado.");
 			}
 		} else {
-			throw new AuthorizationException("Acesso negado, e-mail não encontrado");
+
+			throw new ResponseError(HttpStatus.UNAUTHORIZED, "E-mail não localizado.");
 		}
 
-		// valida e cria itens pedido
-		Set<ItemPedido> itensPedido = validaItensDaRequest(pedidoRequestDTO.getItens());
+		List<ItemPedido> itensPedido = validaItensDaRequest(pedidoRequestDTO.getItens());
 
-		if (itensPedido != null) {
+		if (itensPedido.size() > 0) {
 
-			// cria o pedido
-			Pedido pedido = new Pedido(null, null, cliente, "NOVO", null, itensPedido);
+			Pedido pedidoCriado = pedidoRepository
+					.save(new Pedido(null, new Date(System.currentTimeMillis()), cliente, "NOVO", null, null));
 
-			return pedidoRepository.save(pedido);
+			itensPedido.stream().forEach(item -> item.getIdItem().setPedido(pedidoCriado));
+
+			itemPedidoRepository.saveAll(itensPedido);
+
+			pedidoCriado.setItens(itensPedido);
+
+			return pedidoCriado;
 
 		} else {
-
-			throw new GenericException("Falha na validação dos itens do pedido");
-
+			throw new ResponseError(HttpStatus.UNPROCESSABLE_ENTITY, "Falha na validação dos itens do pedido.");
 		}
 
 	}
 
-	private Set<ItemPedido> validaItensDaRequest(List<ProdutoDTO> itens) {
-		// TODO Auto-generated method stub
+	@Transactional
+	private List<ItemPedido> validaItensDaRequest(List<ProdutoDTO> itens) {
 
-		Set<ItemPedido> itensPedido = new HashSet<>();
-		
-		 itens.stream().forEach(item -> itensPedido.add(produtoRepository.findByProduto(item.getSku())));
+		List<ItemPedido> itensPedido = new ArrayList<>();
 
-	        for (ItemPedido itemPedido : itensPedido) {
-	            Optional<ProdutoDTO> produto = itens.stream().filter(item ->
-	                    item.getSku().equals(itemPedido.getProduto())).findFirst();
+		for (ProdutoDTO produtoDTO : itens) {
+			Optional<Produto> produtoDB = produtoRepository.findByProduto(produtoDTO.getSku());
 
-	            if (!produto.isPresent() || produto.get().getQtde() > itemPedido.getQtde()){
-	                throw new ResponseError(
-	                        HttpStatus.UNPROCESSABLE_ENTITY,
-	                        "Não é possível realizar o pedido pois um mais produtos informados não possui a quantidade suficiente em estoque.");
-	            } else {
-	                produto.get().setQtde(produto.get().getQtde() - itemPedido.getQtde());
-	            }
-	        }
+			if (!produtoDB.isPresent()) {
+				throw new ResponseError(HttpStatus.UNPROCESSABLE_ENTITY,
+						"Não é possível realizar o pedido pois um ou mais produtos informados não encontrado.");
+			} else if (produtoDB.get().getQtde() < produtoDTO.getQtde() || produtoDB.get().getQtde() == 0) {
+				throw new ResponseError(HttpStatus.UNPROCESSABLE_ENTITY,
+						"Não é possível realizar o pedido pois um ou mais produtos informados não possui saldo suficiente em estoque.");
+			} else {
+				produtoDB.get().setQtde(produtoDB.get().getQtde() - produtoDTO.getQtde());
+				produtoRepository.save(produtoDB.get());
 
+				ItemPedidoPK itemId = new ItemPedidoPK(null, produtoDB.get());
+				ItemPedido itemPedido = new ItemPedido(itemId, produtoDTO.getSku(), produtoDTO.getQtde(),
+						produtoDB.get().getPreco(), (produtoDTO.getQtde() * produtoDB.get().getPreco()));
+
+				itensPedido.add(itemPedido);
+			}
+		}
 
 		return itensPedido;
+	}
+
+	@Override
+	public Pedido findByIdPedido(Long idPedido) {
+		return pedidoRepository.findByIdPedido(idPedido).get();
 	}
 
 }

@@ -16,6 +16,7 @@ import javax.persistence.Table;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
+import br.com.ronaldo.desafiobrprev.dto.ClienteCreateRequestDTO;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -32,16 +33,16 @@ public class Cliente implements Serializable {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long idCliente;
-	
+
 	@Column(nullable = false)
 	private String nome;
-	
+
 	@Column(nullable = false, unique = true)
 	private String email;
-	
+
 	@JsonIgnore
 	private String senha;
-	
+
 	private String rua;
 	private String cidade;
 	private String bairro;
@@ -51,5 +52,17 @@ public class Cliente implements Serializable {
 	@JsonIgnore
 	@OneToMany(mappedBy = "cliente", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
 	private List<Pedido> pedidos = new ArrayList<>();
+
+	public Cliente(ClienteCreateRequestDTO clienteCreateRequestDTO) {
+		this.email = clienteCreateRequestDTO.getEmail();
+		this.senha = clienteCreateRequestDTO.getSenha();
+		this.rua = clienteCreateRequestDTO.getRua();
+		this.cidade = clienteCreateRequestDTO.getCidade();
+		this.bairro = clienteCreateRequestDTO.getBairro();
+		this.cep = clienteCreateRequestDTO.getCep();
+		this.estado = clienteCreateRequestDTO.getEstado();
+		this.nome = clienteCreateRequestDTO.getNome();
+
+	}
 
 }
